@@ -108,7 +108,7 @@ class MoQClient:
         self._subscribed_tiers: Dict[str, Tuple[int, int]] = {}  # key → (subgroup, quality)
         
         # Adaptive Budget Management
-        self._gaussian_budget = 10_000_000  # Start with 5M splat budget
+        self._gaussian_budget = 5_000_000  # Start with 5M splat budget
         self._last_render_ms = 33.3        # Target ~30 FPS baseline
         self._budget_increase_rate = 1.1   # +10% if fast
         self._budget_decrease_rate = 0.9   # -10% if slow
