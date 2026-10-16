@@ -105,10 +105,10 @@ class MoQClient:
             width=self.image_width, 
             height=self.image_height
         )
-        self._subscribed_tiers: Dict[str, int] = {}  # key → last-requested tier
+        self._subscribed_tiers: Dict[str, Tuple[int, int]] = {}  # key → (subgroup, quality)
         
         # Adaptive Budget Management
-        self._gaussian_budget = 5_000_000  # Start with 5M splat budget
+        self._gaussian_budget = 10_000_000  # Start with 5M splat budget
         self._last_render_ms = 33.3        # Target ~30 FPS baseline
         self._budget_increase_rate = 1.1   # +10% if fast
         self._budget_decrease_rate = 0.9   # -10% if slow
@@ -331,40 +331,27 @@ class MoQClient:
         # We track per-group which tier was last subscribed in _subscribed_tiers.
         for priority, track_id, group_id in candidates:
             key = f"{track_id}/{group_id}"
-            
-            # current_state is a tuple (max_subgroup, max_quality)
-            state = self._subscribed_tiers.get(key, (-1, 0))
-            curr_sub, curr_qual = state
 
-            # Breadth-first progression:
-            # 1. Fill all visible subsets with Base quality (Quality 0)
-            # 2. Then upgrade them to Full quality (Quality 1)
-            
-            if curr_sub < 2:
-                # Upgrade subset (stay at Base quality)
-                next_sub = curr_sub + 1
-                next_qual = 0
-            elif curr_qual < 1:
-                # All subsets present at Base quality, now upgrade to Full
-                # Start upgrading from Subset 0 again? 
-                # For simplicity, we upgrade the whole group to Quality 1
-                # but we do it subset by subset.
-                # Actually, let's just upgrade to Quality 1 for Subset 0, then 1, then 2.
-                # To track this, we might need a more complex state.
-                # Let's say: (sub, qual)
-                # (0,0) -> (1,0) -> (2,0) -> (0,1) -> (1,1) -> (2,1)
-                next_sub = 0
-                next_qual = 1
-            else:
-                continue # Fully subscribed at max quality
+            curr_sub, curr_qual = self._subscribed_tiers.get(key, (-1, 0))
+            while (curr_sub, curr_qual) != (2, 1):
+                if curr_qual == 0 and curr_sub == 2:
+                    next_sub, next_qual = 0, 1
+                else:
+                    next_sub, next_qual = curr_sub + 1, curr_qual
 
-            await self._subscribe(
-                track_id, group_id,
-                subgroup_id=next_sub,
-                quality_level=next_qual,
-                priority=priority,
-            )
-            self._subscribed_tiers[key] = (next_sub, next_qual)
+                if self.cache.has(track_id, group_id, next_sub, next_qual):
+                    curr_sub, curr_qual = next_sub, next_qual
+                    self._subscribed_tiers[key] = (curr_sub, curr_qual)
+                    continue
+
+                await self._subscribe(
+                    track_id, group_id,
+                    subgroup_id=next_sub,
+                    quality_level=next_qual,
+                    priority=priority,
+                )
+                self._subscribed_tiers[key] = (next_sub, next_qual)
+                break
 
     async def _subscribe(
         self,
@@ -520,7 +507,7 @@ class MoQClient:
         # 5. Assemble and render
         # We pass a flat list of keys to assemble_base (customised call)
         assembled = self.cache.assemble_specific(device=self.device, keys=selected_keys)
-        
+        # assembled = self.cache.assemble_base(device=self.device)
         if assembled is None or assembled["num_gaussians"] == 0:
             logger.debug("render_skip_empty_budget", frame=frame_idx, budget=self._gaussian_budget)
             return None
@@ -542,6 +529,7 @@ class MoQClient:
             camera_pos=cam_pos,
             image_width=self.image_width,
             image_height=self.image_height,
+            fov_y_deg=fov,
             device=self.device,
         )
 
@@ -636,6 +624,10 @@ class MoQClient:
             "avg_fps": total / max(elapsed, 1e-6),
             "rendered_paths": rendered_paths,
         }
+
+        # cache_ply_path = self.output_dir / "cache.ply"
+        # summary["cache_ply_path"] = str(cache_ply_path)
+        # self.cache.export_ply(cache_ply_path)
 
         # Save summary
         summary_path = self.output_dir / "run_summary.json"
