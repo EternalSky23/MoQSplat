@@ -107,7 +107,7 @@ def load_ply(path: str | Path, max_sh_degree: int = 3) -> GaussianScene:
     ).astype(np.float32).reshape(n, 1, 3)
 
     extra_sh: list[np.ndarray] = []
-    for idx in range(num_sh_coeffs - 1):
+    for idx in range(num_sh_coeffs * 3):
         col_name = f"f_rest_{idx}"
         if col_name in vertex.data.dtype.names:
             extra_sh.append(vertex[col_name].astype(np.float32))
